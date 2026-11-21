@@ -28,8 +28,9 @@ sealed interface Edit {
         override val commitMessage get() = "Update post #$id"
     }
 
+    /** Delete an unpublished post; later upcoming posts move up to close the gap. */
     data class Delete(val id: Int) : Edit {
-        override val commitMessage get() = "Delete post #$id"
+        override val commitMessage get() = "Delete post #$id and move later posts up"
     }
 
     /** One-time import of the old on-device `posts.md` / `published.md`. */
@@ -111,9 +112,20 @@ object PostRules {
         return posts.map { if (it.id == edit.id) it.copy(text = text) else it }
     }
 
+    /**
+     * Remove an upcoming post and close the gap: every later upcoming post moves up into its
+     * predecessor's slot (the first one takes the deleted post's date), so spacing is preserved.
+     */
     private fun delete(posts: List<Post>, edit: Edit.Delete): List<Post> {
         val existing = posts.firstOrNull { it.id == edit.id } ?: return posts
         if (existing.published) throw EditException("This post has already been published.")
-        return posts.filter { it.id != edit.id }
+        val later = posts
+            .filter { !it.published && it.date > existing.date }
+            .sortedBy { it.date }
+        val slots = listOf(existing.date) + later.map { it.date }
+        val newDate = later.mapIndexed { i, p -> p.id to slots[i] }.toMap()
+        return posts
+            .filter { it.id != edit.id }
+            .map { p -> newDate[p.id]?.let { p.copy(date = it) } ?: p }
     }
 }

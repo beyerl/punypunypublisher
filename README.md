@@ -11,7 +11,7 @@ beyerl/punypunypublisher-posts (private)
  └─ .github/workflows/publish.yml   ← daily publisher (scripts/publish.py)
 
 Android app:    GET posts.json → edit → PUT posts.json (sha-checked, retried on 409)
-GitHub Action:  daily 09:17 UTC → post every due, unpublished post to Mastodon
+GitHub Action:  daily 06:00 German time → post every due, unpublished post to Mastodon
                 (Idempotency-Key: post-<id>) → set published: true → commit
 ```
 
@@ -26,7 +26,7 @@ the app handles:
 | Field | Rule |
 |-------|------|
 | `id` | `max(id) + 1`, never reused. |
-| `date` (`YYYY-MM-DD`, UTC) | New post: latest date in the file (published posts included) + 7 days, never earlier than today. Editing keeps the date. Dates are unique. |
+| `date` (`YYYY-MM-DD`, UTC) | New post: latest date in the file (published posts included) + 7 days, never earlier than today. Editing keeps the date. Deleting a post moves every later post up one slot, so no gap is left. Dates are unique. |
 | `published`, `status_id`, `status_url` | Set only by the workflow after a successful post. |
 
 To reschedule, edit `date` in `posts.json` on GitHub directly. The workflow posts everything

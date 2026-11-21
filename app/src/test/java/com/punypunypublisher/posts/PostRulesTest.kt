@@ -54,6 +54,28 @@ class PostRulesTest {
     }
 
     @Test
+    fun delete_movesLaterPostsUpToCloseTheGap() {
+        val queue = listOf(
+            Post(1, "2026-11-14", "done", published = true),
+            Post(2, "2026-11-21", "a"),
+            Post(5, "2026-11-28", "b"),
+            Post(3, "2026-12-05", "c"),
+            Post(4, "2026-12-19", "d"),   // existing gap after c is kept
+        )
+        assertEquals(
+            listOf(
+                Post(1, "2026-11-14", "done", published = true),
+                Post(2, "2026-11-21", "a"),
+                Post(3, "2026-11-28", "c"),
+                Post(4, "2026-12-05", "d"),
+            ),
+            PostRules.apply(queue, Edit.Delete(5), 500).sortedBy { it.date },
+        )
+        // Deleting the last post moves nothing.
+        assertEquals(queue.dropLast(1), PostRules.apply(queue, Edit.Delete(4), 500))
+    }
+
+    @Test
     fun delete_removesUpcomingPostAndIgnoresMissing() {
         assertEquals(listOf(1), PostRules.apply(posts, Edit.Delete(3), 500).map { it.id })
         assertEquals(posts, PostRules.apply(posts, Edit.Delete(42), 500))
