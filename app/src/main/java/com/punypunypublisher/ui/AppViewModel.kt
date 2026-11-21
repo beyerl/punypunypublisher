@@ -10,70 +10,113 @@ import com.punypunypublisher.data.MarkdownFormat
 import com.punypunypublisher.data.MarkdownStore
 import com.punypunypublisher.data.Settings
 import com.punypunypublisher.data.SettingsStore
-import com.punypunypublisher.data.model.PublishTime
-import com.punypunypublisher.data.model.PublishedEntry
-import com.punypunypublisher.scheduler.Scheduler
+import com.punypunypublisher.data.model.Post
+import com.punypunypublisher.github.GitHubClient
+import com.punypunypublisher.github.PostRepository
+import com.punypunypublisher.github.PostsSnapshot
+import com.punypunypublisher.posts.Edit
+import com.punypunypublisher.posts.EditException
+import com.punypunypublisher.posts.PostRules
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.io.IOException
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val settingsStore = SettingsStore(app)
-    private val store = MarkdownStore(app.filesDir)
+    private val legacyStore = MarkdownStore(app.filesDir)
+    private val client = GitHubClient()
+    private val repository = PostRepository(client)
 
     val settings: StateFlow<Settings> =
-        settingsStore.settings.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), Settings())
+        settingsStore.settings.stateIn(viewModelScope, SharingStarted.Eagerly, Settings())
 
-    /** Working copy of posts.md bound to the Main editor. */
-    var postsText by mutableStateOf("")
+    var snapshot by mutableStateOf<PostsSnapshot?>(null)
+        private set
+    var loading by mutableStateOf(false)
+        private set
+    var error by mutableStateOf<String?>(null)
+        private set
+    var legacyAvailable by mutableStateOf(false)
         private set
 
-    var publishedEntries by mutableStateOf<List<PublishedEntry>>(emptyList())
-        private set
-
-    /** Raw published.md text, kept for export. */
-    var publishedRawText by mutableStateOf("")
-        private set
+    val upcoming: List<Post> get() = snapshot?.posts.orEmpty().filter { !it.published }.sortedBy { it.date }
+    val published: List<Post> get() = snapshot?.posts.orEmpty().filter { it.published }.sortedByDescending { it.date }
 
     init {
-        loadPosts()
-        loadPublished()
-    }
-
-    fun loadPosts() {
-        viewModelScope.launch { postsText = store.readPostsText() }
-    }
-
-    fun loadPublished() {
         viewModelScope.launch {
-            publishedRawText = store.readPublishedText()
-            publishedEntries = MarkdownFormat.parsePublished(publishedRawText)
+            settingsStore.removeLegacyKeys()
+            legacyAvailable = legacyStore.hasLegacyData()
+            refresh()
         }
     }
 
-    fun onPostsTextChange(text: String) {
-        postsText = text
-    }
-
-    fun savePosts() {
-        viewModelScope.launch { store.writePostsText(postsText) }
-    }
-
-    fun saveCredentials(instanceUrl: String, accessToken: String) {
-        viewModelScope.launch { settingsStore.setCredentials(instanceUrl, accessToken) }
-    }
-
-    fun savePublishTimes(times: List<PublishTime>) {
-        viewModelScope.launch { settingsStore.setPublishTimes(times) }
-    }
-
-    /** Flush editor contents, then enqueue an immediate publish of the next queued row. */
-    fun publishNow() {
+    fun refresh() {
         viewModelScope.launch {
-            store.writePostsText(postsText)
-            Scheduler.publishNow(getApplication())
+            val s = settingsStore.snapshot()
+            if (!s.isConfigured) {
+                error = null
+                return@launch
+            }
+            loading = true
+            try {
+                snapshot = repository.load(s.repoRef())
+                error = null
+            } catch (e: IOException) {
+                error = e.message ?: e.toString()
+            } finally {
+                loading = false
+            }
         }
+    }
+
+    /** Apply [edit] on GitHub; [onDone] receives null on success or an error message. */
+    fun submit(edit: Edit, onDone: (String?) -> Unit) {
+        viewModelScope.launch { onDone(runEdit(edit)) }
+    }
+
+    private suspend fun runEdit(edit: Edit): String? {
+        val s = settingsStore.snapshot()
+        if (!s.isConfigured) return "Set up the GitHub repository and token in Settings first."
+        loading = true
+        return try {
+            snapshot = repository.apply(s.repoRef(), edit, s.maxChars, snapshot)
+            error = null
+            null
+        } catch (e: EditException) {
+            e.message
+        } catch (e: IOException) {
+            "Not saved (are you online?): ${e.message}"
+        } finally {
+            loading = false
+        }
+    }
+
+    fun saveSettings(new: Settings, onDone: () -> Unit) {
+        viewModelScope.launch {
+            settingsStore.save(new)
+            snapshot = null
+            onDone()
+            refresh()
+        }
+    }
+
+    fun importLegacy(onDone: (String?) -> Unit) {
+        viewModelScope.launch {
+            val queued = MarkdownFormat.parsePosts(legacyStore.readPostsText())
+            val history = legacyStore.readPublished()
+            val result = runEdit(Edit.ImportLegacy(queued, history, PostRules.today()))
+            if (result == null) {
+                legacyStore.markImported()
+                legacyAvailable = false
+            }
+            onDone(result)
+        }
+    }
+
+    override fun onCleared() {
+        client.close()
     }
 }

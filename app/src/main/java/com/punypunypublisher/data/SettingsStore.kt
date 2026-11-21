@@ -2,69 +2,84 @@ package com.punypunypublisher.data
 
 import android.content.Context
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
-import com.punypunypublisher.data.model.PublishTime
+import com.punypunypublisher.github.RepoRef
+import com.punypunypublisher.posts.PostRules
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.serialization.decodeFromString
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 
-/** App configuration: Mastodon credentials, weekly publish slots, and the last consumed slot id. */
+/** Where posts.json lives on GitHub, the token to reach it, and the post length limit. */
 data class Settings(
-    val instanceUrl: String = "",
-    val accessToken: String = "",
-    val publishTimes: List<PublishTime> = emptyList(),
+    val owner: String = DEFAULT_OWNER,
+    val repo: String = DEFAULT_REPO,
+    val branch: String = DEFAULT_BRANCH,
+    val path: String = DEFAULT_PATH,
+    val token: String = "",
+    val maxChars: Int = PostRules.DEFAULT_MAX_CHARS,
 ) {
     val isConfigured: Boolean
-        get() = instanceUrl.isNotBlank() && accessToken.isNotBlank()
+        get() = owner.isNotBlank() && repo.isNotBlank() && branch.isNotBlank() &&
+            path.isNotBlank() && token.isNotBlank()
+
+    fun repoRef() = RepoRef(owner.trim(), repo.trim(), branch.trim(), path.trim(), token.trim())
+
+    companion object {
+        const val DEFAULT_OWNER = "beyerl"
+        const val DEFAULT_REPO = "punypunypublisher"
+        const val DEFAULT_BRANCH = "main"
+        const val DEFAULT_PATH = "posts.json"
+    }
 }
 
 private val Context.dataStore by preferencesDataStore(name = "settings")
 
 class SettingsStore(private val context: Context) {
 
-    private val json = Json { ignoreUnknownKeys = true }
-
     val settings: Flow<Settings> = context.dataStore.data.map { prefs ->
         Settings(
-            instanceUrl = prefs[KEY_INSTANCE_URL].orEmpty(),
-            accessToken = prefs[KEY_ACCESS_TOKEN].orEmpty(),
-            publishTimes = prefs[KEY_PUBLISH_TIMES]?.let { decodeTimes(it) }.orEmpty(),
+            owner = prefs[KEY_OWNER] ?: Settings.DEFAULT_OWNER,
+            repo = prefs[KEY_REPO] ?: Settings.DEFAULT_REPO,
+            branch = prefs[KEY_BRANCH] ?: Settings.DEFAULT_BRANCH,
+            path = prefs[KEY_PATH] ?: Settings.DEFAULT_PATH,
+            token = prefs[KEY_TOKEN_ENC]?.let { TokenCipher.decrypt(it) }.orEmpty(),
+            maxChars = prefs[KEY_MAX_CHARS] ?: PostRules.DEFAULT_MAX_CHARS,
         )
     }
 
     suspend fun snapshot(): Settings = settings.first()
 
-    suspend fun setCredentials(instanceUrl: String, accessToken: String) {
+    suspend fun save(s: Settings) {
         context.dataStore.edit { prefs ->
-            prefs[KEY_INSTANCE_URL] = instanceUrl.trim()
-            prefs[KEY_ACCESS_TOKEN] = accessToken.trim()
+            prefs[KEY_OWNER] = s.owner.trim()
+            prefs[KEY_REPO] = s.repo.trim()
+            prefs[KEY_BRANCH] = s.branch.trim()
+            prefs[KEY_PATH] = s.path.trim()
+            prefs[KEY_MAX_CHARS] = s.maxChars
+            if (s.token.isBlank()) prefs.remove(KEY_TOKEN_ENC)
+            else prefs[KEY_TOKEN_ENC] = TokenCipher.encrypt(s.token.trim())
         }
     }
 
-    suspend fun setPublishTimes(times: List<PublishTime>) {
+    /**
+     * Drop settings from the on-device publisher (≤ 0.1): the Mastodon token now lives only in
+     * GitHub Actions secrets, and publish times are replaced by per-post dates.
+     */
+    suspend fun removeLegacyKeys() {
         context.dataStore.edit { prefs ->
-            prefs[KEY_PUBLISH_TIMES] = json.encodeToString(times)
+            LEGACY_KEYS.forEach { prefs.remove(stringPreferencesKey(it)) }
         }
     }
-
-    suspend fun lastPublishedSlot(): String? =
-        context.dataStore.data.first()[KEY_LAST_SLOT]
-
-    suspend fun setLastPublishedSlot(slotId: String) {
-        context.dataStore.edit { prefs -> prefs[KEY_LAST_SLOT] = slotId }
-    }
-
-    private fun decodeTimes(raw: String): List<PublishTime> =
-        runCatching { json.decodeFromString<List<PublishTime>>(raw) }.getOrDefault(emptyList())
 
     private companion object {
-        val KEY_INSTANCE_URL = stringPreferencesKey("instance_url")
-        val KEY_ACCESS_TOKEN = stringPreferencesKey("access_token")
-        val KEY_PUBLISH_TIMES = stringPreferencesKey("publish_times")
-        val KEY_LAST_SLOT = stringPreferencesKey("last_published_slot")
+        val KEY_OWNER = stringPreferencesKey("github_owner")
+        val KEY_REPO = stringPreferencesKey("github_repo")
+        val KEY_BRANCH = stringPreferencesKey("github_branch")
+        val KEY_PATH = stringPreferencesKey("github_path")
+        val KEY_TOKEN_ENC = stringPreferencesKey("github_token_enc")
+        val KEY_MAX_CHARS = intPreferencesKey("max_chars")
+        val LEGACY_KEYS = listOf("instance_url", "access_token", "publish_times", "last_published_slot")
     }
 }

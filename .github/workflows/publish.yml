@@ -1,0 +1,32 @@
+name: Publish
+
+# Posts every due entry of posts.json to Mastodon. Runs daily (Actions cron is loose and can
+# skip runs; a daily run catches up on anything missed). Start it by hand under
+# Actions → Publish → Run workflow.
+on:
+  schedule:
+    - cron: "17 9 * * *"   # 09:17 UTC daily; off the hour to avoid peak-time delays
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish due posts
+        env:
+          MASTODON_TOKEN: ${{ secrets.MASTODON_TOKEN }}
+          MASTODON_INSTANCE: ${{ secrets.MASTODON_INSTANCE }}
+          PUBLISH_TZ: UTC   # must match PostRules.ZONE in the app
+        run: |
+          git config user.name "publisher-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python3 scripts/publish.py

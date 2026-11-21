@@ -3,6 +3,7 @@ name: Build
 on:
   push:
     branches: [ '**' ]
+    paths-ignore: [ 'posts.json' ]   # app saves and publisher commits don't need a build
   pull_request:
 
 permissions:
@@ -26,6 +27,9 @@ jobs:
 
       - name: Make gradlew executable
         run: chmod +x gradlew
+
+      - name: Publisher script tests
+        run: python3 -m unittest discover -s scripts -v
 
       - name: Unit tests
         run: ./gradlew test

@@ -1,14 +1,13 @@
 package com.punypunypublisher.ui
 
 import android.widget.Toast
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
@@ -17,105 +16,117 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import com.punypunypublisher.export.Exporter
-import com.punypunypublisher.ui.components.PublishTimesEditor
+import com.punypunypublisher.data.Settings
 
 @Composable
 fun SettingsView(viewModel: AppViewModel, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val settings by viewModel.settings.collectAsState()
+    val stored by viewModel.settings.collectAsState()
 
-    // Show the stored value until the user starts editing (null = untouched).
-    var urlEdit by remember { mutableStateOf<String?>(null) }
-    var tokenEdit by remember { mutableStateOf<String?>(null) }
-    val url = urlEdit ?: settings.instanceUrl
-    val token = tokenEdit ?: settings.accessToken
-
-    LaunchedEffect(Unit) { viewModel.loadPublished() }
-
-    val exportPosts = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("text/markdown"),
-    ) { uri -> uri?.let { Exporter.writeTo(context, it, viewModel.postsText) } }
-
-    val exportPublished = rememberLauncherForActivityResult(
-        ActivityResultContracts.CreateDocument("text/markdown"),
-    ) { uri -> uri?.let { Exporter.writeTo(context, it, viewModel.publishedRawText) } }
+    // Local edits; null = untouched, show the stored value.
+    var owner by remember { mutableStateOf<String?>(null) }
+    var repo by remember { mutableStateOf<String?>(null) }
+    var branch by remember { mutableStateOf<String?>(null) }
+    var path by remember { mutableStateOf<String?>(null) }
+    var token by remember { mutableStateOf<String?>(null) }
+    var maxChars by remember { mutableStateOf<String?>(null) }
 
     Column(
         modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Mastodon credentials", style = MaterialTheme.typography.titleMedium)
-        OutlinedTextField(
-            value = url,
-            onValueChange = { urlEdit = it },
-            label = { Text("Instance URL (e.g. https://mastodon.social)") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+        Text("GitHub repository", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "Posts are stored in a JSON file in this repo. A GitHub Actions workflow there " +
+                "publishes them to Mastodon; the Mastodon token lives only in the repo's Actions secrets.",
+            style = MaterialTheme.typography.bodySmall,
         )
+        Field("Owner", owner ?: stored.owner) { owner = it }
+        Field("Repository", repo ?: stored.repo) { repo = it }
+        Field("Branch", branch ?: stored.branch) { branch = it }
+        Field("File path", path ?: stored.path) { path = it }
         OutlinedTextField(
-            value = token,
-            onValueChange = { tokenEdit = it },
-            label = { Text("Access token") },
+            value = token ?: stored.token,
+            onValueChange = { token = it },
+            label = { Text("Fine-grained personal access token") },
+            supportingText = { Text("Contents: Read and write, this repo only. Stored encrypted.") },
             singleLine = true,
             visualTransformation = PasswordVisualTransformation(),
             modifier = Modifier.fillMaxWidth(),
         )
-        Button(
-            onClick = {
-                viewModel.saveCredentials(url, token)
-                Toast.makeText(context, "Credentials saved", Toast.LENGTH_SHORT).show()
-            },
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text("Save credentials") }
-
-        HorizontalDivider()
-
-        Text("Publish times (weekly, UTC)", style = MaterialTheme.typography.titleMedium)
-        PublishTimesEditor(
-            times = settings.publishTimes,
-            onAdd = { added ->
-                if (settings.publishTimes.none { it == added }) {
-                    viewModel.savePublishTimes(settings.publishTimes + added)
-                }
-            },
-            onRemove = { removed ->
-                viewModel.savePublishTimes(settings.publishTimes.filterNot { it == removed })
-            },
+        OutlinedTextField(
+            value = maxChars ?: stored.maxChars.toString(),
+            onValueChange = { maxChars = it.filter(Char::isDigit) },
+            label = { Text("Max characters per post (your instance's limit)") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.fillMaxWidth(),
         )
-
-        HorizontalDivider()
-
-        Text("Actions", style = MaterialTheme.typography.titleMedium)
-        OutlinedButton(
+        Button(
             onClick = {
-                viewModel.publishNow()
-                Toast.makeText(context, "Publishing next queued post…", Toast.LENGTH_SHORT).show()
+                val new = Settings(
+                    owner = owner ?: stored.owner,
+                    repo = repo ?: stored.repo,
+                    branch = branch ?: stored.branch,
+                    path = path ?: stored.path,
+                    token = token ?: stored.token,
+                    maxChars = (maxChars ?: stored.maxChars.toString()).toIntOrNull()?.takeIf { it > 0 }
+                        ?: stored.maxChars,
+                )
+                viewModel.saveSettings(new) {
+                    Toast.makeText(context, "Saved. Loading posts…", Toast.LENGTH_SHORT).show()
+                }
             },
             modifier = Modifier.fillMaxWidth(),
-        ) { Text("Publish next now") }
+        ) { Text("Save and connect") }
 
-        HorizontalDivider()
+        viewModel.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        if (viewModel.snapshot != null && viewModel.error == null) {
+            Text(
+                "Connected: ${viewModel.snapshot?.posts?.size ?: 0} posts in ${stored.path}.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
 
-        Text("Export", style = MaterialTheme.typography.titleMedium)
-        OutlinedButton(
-            onClick = { exportPosts.launch("posts.md") },
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text("Export posts.md") }
-        OutlinedButton(
-            onClick = { exportPublished.launch("published.md") },
-            modifier = Modifier.fillMaxWidth(),
-        ) { Text("Export published.md") }
+        if (viewModel.legacyAvailable) {
+            HorizontalDivider()
+            Text("Old on-device queue", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "This phone still has posts.md / published.md from the previous version. Import " +
+                    "them into posts.json: queued lines become weekly upcoming posts, history " +
+                    "becomes published posts. Already-present texts are skipped.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            OutlinedButton(
+                enabled = stored.isConfigured && viewModel.snapshot != null && !viewModel.loading,
+                onClick = {
+                    viewModel.importLegacy { problem ->
+                        Toast.makeText(context, problem ?: "Imported.", Toast.LENGTH_LONG).show()
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Import old posts") }
+        }
     }
+}
+
+@Composable
+private fun Field(label: String, value: String, onChange: (String) -> Unit) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onChange,
+        label = { Text(label) },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+    )
 }
