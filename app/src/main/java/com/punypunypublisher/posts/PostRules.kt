@@ -48,7 +48,7 @@ object PostRules {
     const val DEFAULT_MAX_CHARS = 500
     const val SPACING_DAYS = 7L
 
-    /** Reference time zone shared with the workflow (`PUBLISH_TZ` in publish.yml). */
+    /** Reference time zone shared with the workflow (`PUBLISH_TZ` in publish.yml of the posts repo). */
     val ZONE: ZoneId = ZoneOffset.UTC
 
     fun today(clock: Clock = Clock.systemUTC()): LocalDate = LocalDate.now(clock.withZone(ZONE))

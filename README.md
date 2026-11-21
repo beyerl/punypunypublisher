@@ -6,7 +6,7 @@ a queue of posts on your phone; one goes out each week. No server, no cost.
 ## How it works
 
 ```
-GitHub repo (this one)
+beyerl/punypunypublisher-posts (private)
  ├─ posts.json                      ← single source of truth
  └─ .github/workflows/publish.yml   ← daily publisher (scripts/publish.py)
 
@@ -34,9 +34,8 @@ with `date <= today` that isn't published yet, so a missed run catches up the ne
 
 Saving needs a connection. Offline saves fail and the editor keeps your text.
 
-> **Note:** this repo is public, so drafts in `posts.json` are visible to anyone. To keep them
-> private, put `posts.json`, `scripts/publish.py` and `.github/workflows/publish.yml` in a private
-> repo and point the app's Settings at it.
+The posts live in a separate **private** repo, so drafts aren't public. Any repo with those three
+files works: point the app's Settings at it.
 
 ## Setup
 
@@ -44,7 +43,7 @@ Saving needs a connection. Offline saves fail and the editor keeps your text.
 
 1. On your instance: **Preferences → Development → New application**. Give it the scope
    `write:statuses` only (untick the rest), then submit. Open the app and copy **Your access token**.
-2. On GitHub: **this repo → Settings → Secrets and variables → Actions → New repository secret**:
+2. On GitHub: **the posts repo → Settings → Secrets and variables → Actions → New repository secret**:
    - `MASTODON_INSTANCE` = `https://your.instance`
    - `MASTODON_TOKEN` = the access token
 3. Test it: **Actions → Publish → Run workflow**. It logs `0 post(s) due` when nothing is due.
@@ -53,7 +52,7 @@ Saving needs a connection. Offline saves fail and the editor keeps your text.
 
 1. GitHub: **Settings → Developer settings → Personal access tokens → Fine-grained tokens →
    Generate new token**.
-2. Resource owner: you. Repository access: **Only select repositories**, then this repo.
+2. Resource owner: you. Repository access: **Only select repositories**, then the posts repo.
 3. Permissions → Repository permissions → **Contents: Read and write**. Nothing else is needed
    (Metadata: read-only is added automatically).
 4. Choose an expiration and generate the token. Paste it into the app under **Settings**, check
@@ -69,16 +68,13 @@ into `posts.json`: queued lines become weekly upcoming posts and history becomes
 ## Building
 
 GitHub Actions (`.github/workflows/build.yml`) runs the tests and builds a debug APK on every
-push. The APK is uploaded as the `app-debug` artifact. Pushes that change only `posts.json` are
-skipped.
+push. The APK is uploaded as the `app-debug` artifact.
 
 Locally (JDK 17 + Android SDK):
 
 ```bash
-./gradlew test                                  # app unit tests
-python3 -m unittest discover -s scripts         # publisher tests
-./gradlew assembleDebug                         # app/build/outputs/apk/debug/app-debug.apk
-DRY_RUN=1 python3 scripts/publish.py            # show which posts are due
+./gradlew test           # unit tests
+./gradlew assembleDebug  # app/build/outputs/apk/debug/app-debug.apk
 ```
 
 ## Architecture
@@ -89,4 +85,4 @@ DRY_RUN=1 python3 scripts/publish.py            # show which posts are due
 - `posts/`: `PostRules` (ids, dates, validation, read-only published posts) and `LegacyImport`.
 - `github/`: `GitHubClient` (Contents API GET/PUT) and `PostRepository` (on 409: re-fetch, re-apply the edit, retry).
 - `ui/`: Compose UI with Upcoming, Published and Settings tabs, plus the post editor.
-- `scripts/publish.py`: the Actions publisher (stdlib only).
+- The publisher (`scripts/publish.py`, stdlib only) and its workflow live in the posts repo.

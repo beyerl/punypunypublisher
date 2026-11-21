@@ -28,7 +28,7 @@ data class Settings(
 
     companion object {
         const val DEFAULT_OWNER = "beyerl"
-        const val DEFAULT_REPO = "punypunypublisher"
+        const val DEFAULT_REPO = "punypunypublisher-posts"
         const val DEFAULT_BRANCH = "main"
         const val DEFAULT_PATH = "posts.json"
     }

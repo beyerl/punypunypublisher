@@ -7,7 +7,7 @@ import kotlinx.serialization.json.Json
 
 /**
  * (De)serialization of `posts.json`. The output matches Python's `json.dump(indent=2)` used by
- * `scripts/publish.py`, so commits from the app and from the workflow produce clean diffs.
+ * `scripts/publish.py` (in the posts repo), so commits from the app and from the workflow produce clean diffs.
  */
 @OptIn(ExperimentalSerializationApi::class)
 object PostsJson {
