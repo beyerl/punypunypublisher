@@ -15,22 +15,22 @@ GitHub Action:  daily 06:00 German time → post every due, unpublished post to 
                 (Idempotency-Key: post-<id>) → set published: true → commit
 ```
 
-- **Upcoming** tab: posts not yet published. The top one goes out next. Tap **+** to add one
-  and tap a post to edit or delete it. Posts can span several lines.
+- **Upcoming** tab: the whole queue as one text, **one post per line**, top line publishes next.
+  Edit freely (add, remove, reorder lines) and tap **Save**: it writes everything at once.
 - **Published** tab: what the workflow has actually posted, newest first, read-only.
-- **Settings**: the GitHub repo and token, and the character limit.
+- **Settings**: GitHub repo + token, character limit.
 
 The app shows only the text. Each post in `posts.json` also has an `id` and a `date`, which
-the app handles:
+the app manages on save:
 
 | Field | Rule |
 |-------|------|
-| `id` | `max(id) + 1`, never reused. |
-| `date` (`YYYY-MM-DD`, UTC) | New post: latest date in the file (published posts included) + 7 days, never earlier than today. Editing keeps the date. Deleting a post moves every later post up one slot, so no gap is left. Dates are unique. |
+| `id` | Unchanged lines keep their id; new or edited lines get `max(id) + 1`. Ids are never reused. |
+| `date` (`YYYY-MM-DD`, UTC) | Line *n* takes the *n*-th existing upcoming date, so removing a line moves later posts up (no gap) and reordering lines reorders publishing. Extra lines get latest date (published posts included) + 7 days, never in the past. Dates are unique. |
 | `published`, `status_id`, `status_url` | Set only by the workflow after a successful post. |
 
-To reschedule, edit `date` in `posts.json` on GitHub directly. The workflow posts everything
-with `date <= today` that isn't published yet, so a missed run catches up the next day.
+If the workflow published a post while you were editing, its line is dropped on save rather than
+queued again. Posts added from another device in the meantime are kept, at the end.
 
 Saving needs a connection. Offline saves fail and the editor keeps your text.
 
@@ -84,5 +84,5 @@ Locally (JDK 17 + Android SDK):
   `MarkdownStore`/`MarkdownFormat`, kept only for the import.
 - `posts/`: `PostRules` (ids, dates, validation, read-only published posts) and `LegacyImport`.
 - `github/`: `GitHubClient` (Contents API GET/PUT) and `PostRepository` (on 409: re-fetch, re-apply the edit, retry).
-- `ui/`: Compose UI with Upcoming, Published and Settings tabs, plus the post editor.
+- `ui/`: Compose UI: Upcoming (one-post-per-line editor), Published and Settings tabs.
 - The publisher (`scripts/publish.py`, stdlib only) and its workflow live in the posts repo.

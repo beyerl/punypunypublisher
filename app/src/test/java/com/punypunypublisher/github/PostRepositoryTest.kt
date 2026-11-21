@@ -81,15 +81,15 @@ class PostRepositoryTest {
             fileText = PostsJson.encode(listOf(Post(1, "2026-11-28", "first"), Post(2, "2026-12-05", "other device")))
             fileSha = "sha-other"
         }
-        val result = repository.apply(ref, Edit.Add("mine", LocalDate.parse("2026-11-21")), 500, stale)
+        val result = repository.apply(ref, Edit.ReplaceQueue(listOf("first", "mine"), setOf(1), LocalDate.parse("2026-11-21")), 500, stale)
 
         val expected = listOf(
             Post(1, "2026-11-28", "first"),
-            Post(2, "2026-12-05", "other device"),
-            Post(3, "2026-12-12", "mine"),
+            Post(3, "2026-12-05", "mine"),
+            Post(2, "2026-12-12", "other device"),
         )
-        assertEquals(expected, result.posts)
-        assertEquals(expected, PostsJson.decode(fileText))
+        assertEquals(expected, result.posts.sortedBy { it.date })
+        assertEquals(expected, PostsJson.decode(fileText).sortedBy { it.date })
         assertEquals(fileSha, result.sha)
         assertEquals(1, putCount)
     }

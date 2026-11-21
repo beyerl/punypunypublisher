@@ -2,19 +2,18 @@ package com.punypunypublisher.ui
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Schedule
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -27,55 +26,27 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.punypunypublisher.data.model.Post
 
 private enum class Tab(val title: String, val icon: ImageVector) {
-    UPCOMING("Upcoming", Icons.Filled.Schedule),
+    UPCOMING("Upcoming", Icons.Filled.Edit),
     PUBLISHED("Published", Icons.Filled.CheckCircle),
     SETTINGS("Settings", Icons.Filled.Settings),
 }
 
-/** Editor target: a new post, or an existing upcoming one. */
-private sealed interface Editing {
-    data object New : Editing
-    data class Existing(val post: Post) : Editing
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun AppScaffold(viewModel: AppViewModel = viewModel()) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    var editing by remember { mutableStateOf<Editing?>(null) }
     val settings by viewModel.settings.collectAsState()
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text(Tab.entries[tab].title) },
-                actions = {
-                    if (tab != Tab.SETTINGS.ordinal) {
-                        IconButton(onClick = viewModel::refresh) {
-                            Icon(Icons.Filled.Refresh, contentDescription = "Reload from GitHub")
-                        }
-                    }
-                },
-            )
-        },
-        floatingActionButton = {
-            if (tab == Tab.UPCOMING.ordinal && settings.isConfigured && viewModel.snapshot != null) {
-                FloatingActionButton(onClick = { editing = Editing.New }) {
-                    Icon(Icons.Filled.Add, contentDescription = "New post")
-                }
-            }
-        },
+        topBar = { TopAppBar(title = { Text(Tab.entries[tab].title) }) },
         bottomBar = {
             NavigationBar {
                 Tab.entries.forEach { entry ->
@@ -89,7 +60,15 @@ fun AppScaffold(viewModel: AppViewModel = viewModel()) {
             }
         },
     ) { padding ->
-        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+        // Scaffold padding covers the bars; consuming it before imePadding() makes the content
+        // shrink to exactly the space above the keyboard instead of sliding under it.
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .consumeWindowInsets(padding)
+                .imePadding(),
+        ) {
             if (viewModel.loading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             viewModel.error?.takeIf { tab != Tab.SETTINGS.ordinal }?.let { message ->
                 Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
@@ -101,31 +80,11 @@ fun AppScaffold(viewModel: AppViewModel = viewModel()) {
                 when {
                     tab == Tab.SETTINGS.ordinal -> SettingsView(viewModel)
                     !settings.isConfigured -> NotConfigured(onOpenSettings = { tab = Tab.SETTINGS.ordinal })
-                    tab == Tab.UPCOMING.ordinal -> UpcomingView(
-                        posts = viewModel.upcoming,
-                        loaded = viewModel.snapshot != null,
-                        onEdit = { editing = Editing.Existing(it) },
-                    )
+                    tab == Tab.UPCOMING.ordinal -> MainView(viewModel)
                     else -> PublishedView(viewModel.published, loaded = viewModel.snapshot != null)
                 }
             }
         }
-    }
-
-    editing?.let { target ->
-        val existing = (target as? Editing.Existing)?.post
-        PostEditor(
-            initial = existing,
-            maxChars = settings.maxChars,
-            busy = viewModel.loading,
-            onSubmit = { edit, onResult ->
-                viewModel.submit(edit) { problem ->
-                    onResult(problem)
-                    if (problem == null) editing = null
-                }
-            },
-            onDismiss = { editing = null },
-        )
     }
 }
 

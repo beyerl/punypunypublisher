@@ -42,7 +42,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var legacyAvailable by mutableStateOf(false)
         private set
 
-    val upcoming: List<Post> get() = snapshot?.posts.orEmpty().filter { !it.published }.sortedBy { it.date }
+    /** Editor text for the Upcoming tab: one post per line, the top line publishes next. */
+    var queueText by mutableStateOf("")
+        private set
+
+    /** Ids of the upcoming posts [queueText] was loaded from (see [Edit.ReplaceQueue.baseIds]). */
+    private var baseIds: Set<Int> = emptySet()
+
+    val queuedCount: Int get() = PostRules.parseLines(queueText).size
     val published: List<Post> get() = snapshot?.posts.orEmpty().filter { it.published }.sortedByDescending { it.date }
 
     init {
@@ -53,6 +60,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun onQueueTextChange(text: String) {
+        queueText = text
+    }
+
+    /** Reload posts.json from GitHub. Replaces unsaved edits in the editor. */
     fun refresh() {
         viewModelScope.launch {
             val s = settingsStore.snapshot()
@@ -62,7 +74,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             loading = true
             try {
-                snapshot = repository.load(s.repoRef())
+                show(repository.load(s.repoRef()))
                 error = null
             } catch (e: IOException) {
                 error = e.message ?: e.toString()
@@ -72,8 +84,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Apply [edit] on GitHub; [onDone] receives null on success or an error message. */
-    fun submit(edit: Edit, onDone: (String?) -> Unit) {
+    /** Save the editor text as the upcoming queue. [onDone] gets null on success, else a message. */
+    fun saveQueue(onDone: (String?) -> Unit) {
+        val edit = Edit.ReplaceQueue(PostRules.parseLines(queueText), baseIds, PostRules.today())
         viewModelScope.launch { onDone(runEdit(edit)) }
     }
 
@@ -82,7 +95,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!s.isConfigured) return "Set up the GitHub repository and token in Settings first."
         loading = true
         return try {
-            snapshot = repository.apply(s.repoRef(), edit, s.maxChars, snapshot)
+            show(repository.apply(s.repoRef(), edit, s.maxChars, snapshot))
             error = null
             null
         } catch (e: EditException) {
@@ -94,10 +107,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    private fun show(new: PostsSnapshot) {
+        snapshot = new
+        queueText = PostRules.queueText(new.posts)
+        baseIds = PostRules.upcoming(new.posts).map { it.id }.toSet()
+    }
+
     fun saveSettings(new: Settings, onDone: () -> Unit) {
         viewModelScope.launch {
             settingsStore.save(new)
             snapshot = null
+            queueText = ""
+            baseIds = emptySet()
             onDone()
             refresh()
         }

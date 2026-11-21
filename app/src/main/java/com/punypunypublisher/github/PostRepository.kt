@@ -35,9 +35,10 @@ class PostRepository(private val client: GitHubClient) {
         var snapshot = current ?: load(ref)
         repeat(MAX_ATTEMPTS) {
             val updated = PostRules.apply(snapshot.posts, edit, maxChars)
-            if (updated == snapshot.posts) return snapshot
+            val text = PostsJson.encode(updated)
+            if (text == PostsJson.encode(snapshot.posts)) return snapshot   // nothing changed
             try {
-                val sha = client.write(ref, PostsJson.encode(updated), snapshot.sha, edit.commitMessage)
+                val sha = client.write(ref, text, snapshot.sha, edit.commitMessage)
                 return PostsSnapshot(updated, sha)
             } catch (_: ConflictException) {
                 snapshot = load(ref)

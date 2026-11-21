@@ -22,19 +22,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.punypunypublisher.data.model.Post
 
-/** Tab 1: unpublished posts; the top one goes out next. Tap to edit. */
-@Composable
-fun UpcomingView(posts: List<Post>, loaded: Boolean, onEdit: (Post) -> Unit) {
-    when {
-        !loaded -> Centered("Loading posts from GitHub…")
-        posts.isEmpty() -> Centered("Nothing scheduled. Tap + to write a post.")
-        else -> PostList(posts) { post ->
-            PostCard(post, onClick = { onEdit(post) })
-        }
-    }
-}
-
-/** Tab 2: posts the workflow has actually published, newest first. Read-only. */
+/** Published tab: posts the workflow has actually published, newest first. Read-only. */
 @Composable
 fun PublishedView(posts: List<Post>, loaded: Boolean) {
     val uriHandler = LocalUriHandler.current

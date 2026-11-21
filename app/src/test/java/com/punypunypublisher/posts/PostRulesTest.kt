@@ -5,7 +5,6 @@ import com.punypunypublisher.data.model.Post
 import com.punypunypublisher.data.model.PublishedEntry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Instant
 import java.time.LocalDate
@@ -13,88 +12,97 @@ import java.time.LocalDate
 class PostRulesTest {
 
     private val today = LocalDate.parse("2026-11-21")
-    private val posts = listOf(
-        Post(1, "2026-11-07", "published", published = true),
-        Post(3, "2026-11-28", "upcoming"),
+    private fun save(posts: List<Post>, vararg lines: String, base: Set<Int>? = null, maxChars: Int = 500) =
+        PostRules.apply(
+            posts,
+            Edit.ReplaceQueue(lines.toList(), base ?: PostRules.upcoming(posts).map { it.id }.toSet(), today),
+            maxChars,
+        ).sortedBy { it.date }
+
+    private val queue = listOf(
+        Post(1, "2026-11-14", "done", published = true),
+        Post(2, "2026-11-21", "a"),
+        Post(5, "2026-11-28", "b"),
+        Post(3, "2026-12-05", "c"),
     )
 
     @Test
-    fun add_assignsNextIdAndLatestDatePlusAWeek() {
-        val result = PostRules.apply(posts, Edit.Add("new", today), 500)
-        assertEquals(Post(4, "2026-12-05", "new"), result.last())
+    fun queueText_isOnePostPerLineInDateOrder() {
+        assertEquals("a\nb\nc", PostRules.queueText(queue))
+        assertEquals(listOf("x", "y"), PostRules.parseLines("  x \n\n y\n"))
     }
 
     @Test
-    fun add_countsPublishedPostsForTheLatestDate() {
+    fun unchangedQueue_keepsEverything() {
+        assertEquals(queue, save(queue, "a", "b", "c"))
+    }
+
+    @Test
+    fun appendedLine_getsNextIdAndLatestDatePlusAWeek() {
+        assertEquals(Post(6, "2026-12-12", "d"), save(queue, "a", "b", "c", "d").last())
+    }
+
+    @Test
+    fun firstPost_countsPublishedPostsAndIsNeverInThePast() {
         val onlyPublished = listOf(Post(1, "2026-11-20", "p", published = true))
-        assertEquals("2026-11-27", PostRules.apply(onlyPublished, Edit.Add("x", today), 500).last().date)
-    }
-
-    @Test
-    fun nextDate_isNeverInThePast() {
+        assertEquals("2026-11-27", save(onlyPublished, "x").last().date)
         val stale = listOf(Post(1, "2026-01-01", "p", published = true))
-        assertEquals(today, PostRules.nextDate(stale, today))
-        assertEquals(today, PostRules.nextDate(emptyList(), today))
+        assertEquals(today.toString(), save(stale, "x").last().date)
+        assertEquals(today.toString(), save(emptyList(), "x").single().date)
     }
 
     @Test
-    fun update_changesTextButKeepsDate() {
-        val result = PostRules.apply(posts, Edit.Update(3, "changed"), 500)
-        assertEquals(Post(3, "2026-11-28", "changed"), result.first { it.id == 3 })
-    }
-
-    @Test(expected = EditException::class)
-    fun update_refusesPublishedPosts() {
-        PostRules.apply(posts, Edit.Update(1, "nope"), 500)
-    }
-
-    @Test(expected = EditException::class)
-    fun delete_refusesPublishedPosts() {
-        PostRules.apply(posts, Edit.Delete(1), 500)
-    }
-
-    @Test
-    fun delete_movesLaterPostsUpToCloseTheGap() {
-        val queue = listOf(
-            Post(1, "2026-11-14", "done", published = true),
-            Post(2, "2026-11-21", "a"),
-            Post(5, "2026-11-28", "b"),
-            Post(3, "2026-12-05", "c"),
-            Post(4, "2026-12-19", "d"),   // existing gap after c is kept
-        )
+    fun removedLine_movesLaterPostsUpWithoutGap() {
         assertEquals(
             listOf(
                 Post(1, "2026-11-14", "done", published = true),
                 Post(2, "2026-11-21", "a"),
                 Post(3, "2026-11-28", "c"),
-                Post(4, "2026-12-05", "d"),
             ),
-            PostRules.apply(queue, Edit.Delete(5), 500).sortedBy { it.date },
+            save(queue, "a", "c"),
         )
-        // Deleting the last post moves nothing.
-        assertEquals(queue.dropLast(1), PostRules.apply(queue, Edit.Delete(4), 500))
     }
 
     @Test
-    fun delete_removesUpcomingPostAndIgnoresMissing() {
-        assertEquals(listOf(1), PostRules.apply(posts, Edit.Delete(3), 500).map { it.id })
-        assertEquals(posts, PostRules.apply(posts, Edit.Delete(42), 500))
-    }
-
-    @Test(expected = EditException::class)
-    fun add_rejectsTooLongText() {
-        PostRules.apply(posts, Edit.Add("x".repeat(11), today), 10)
-    }
-
-    @Test(expected = EditException::class)
-    fun add_rejectsBlankText() {
-        PostRules.apply(posts, Edit.Add("  \n", today), 500)
+    fun editedLine_keepsSlotAndGetsNewId() {
+        assertEquals(Post(6, "2026-11-28", "b edited"), save(queue, "a", "b edited", "c")[2])
     }
 
     @Test
-    fun problems_flagsDuplicateDates() {
-        assertTrue(PostRules.problems("2026-11-28", "x", posts, 500).isNotEmpty())
-        assertTrue(PostRules.problems("2026-11-29", "x", posts, 500).isEmpty())
+    fun reorderedLines_swapDatesAndKeepIds() {
+        assertEquals(listOf(2, 3, 5), save(queue, "a", "c", "b").drop(1).map { it.id })
+    }
+
+    @Test
+    fun lineOfPostPublishedMeanwhile_isNotQueuedAgain() {
+        // Editor loaded with a, b, c; the workflow then published "a".
+        val afterPublish = queue.map { if (it.id == 2) it.copy(published = true) else it }
+        val result = save(afterPublish, "a", "b", "c", base = setOf(2, 5, 3))
+        assertEquals(1, result.count { it.text == "a" })
+        assertEquals(listOf("b", "c"), result.filter { !it.published }.map { it.text })
+    }
+
+    @Test
+    fun postAddedElsewhereMeanwhile_isKeptAtTheEnd() {
+        val withOther = queue + Post(9, "2026-12-12", "from other device")
+        val result = save(withOther, "a", "c", base = setOf(2, 5, 3))
+        assertEquals(listOf("a", "c", "from other device"), result.filter { !it.published }.map { it.text })
+    }
+
+    @Test
+    fun publishedPosts_areNeverTouched() {
+        assertEquals(listOf(Post(1, "2026-11-14", "done", published = true)), save(queue))
+    }
+
+    @Test(expected = EditException::class)
+    fun tooLongLine_isRejected() {
+        save(queue, "a", "x".repeat(11), maxChars = 10)
+    }
+
+    @Test
+    fun datesStayUnique() {
+        val result = save(queue, "1", "2", "3", "4", "5")
+        assertEquals(result.size, result.map { it.date }.toSet().size)
     }
 
     @Test

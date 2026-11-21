@@ -13,24 +13,22 @@ class EditException(message: String) : Exception(message)
 
 /**
  * A change to `posts.json`. Edits are re-applied to a freshly fetched file when a save hits a
- * 409 conflict, so they describe intent ("set post 7 to …") rather than a whole new file.
+ * 409 conflict, so they describe intent rather than a whole new file.
  */
 sealed interface Edit {
     val commitMessage: String
 
-    /** New post; its id and date are assigned when applied (see [PostRules.nextDate]). */
-    data class Add(val text: String, val today: LocalDate) : Edit {
-        override val commitMessage get() = "Add post"
-    }
-
-    /** Change the text of an unpublished post; its date stays as is. */
-    data class Update(val id: Int, val text: String) : Edit {
-        override val commitMessage get() = "Update post #$id"
-    }
-
-    /** Delete an unpublished post; later upcoming posts move up to close the gap. */
-    data class Delete(val id: Int) : Edit {
-        override val commitMessage get() = "Delete post #$id and move later posts up"
+    /**
+     * Save the edited queue: [lines] are the upcoming posts in publishing order (one per line).
+     * [baseIds] are the ids of the upcoming posts the editor was loaded with; if one of them has
+     * been published in the meantime, its line is dropped instead of being queued again.
+     */
+    data class ReplaceQueue(
+        val lines: List<String>,
+        val baseIds: Set<Int>,
+        val today: LocalDate,
+    ) : Edit {
+        override val commitMessage get() = "Update posts"
     }
 
     /** One-time import of the old on-device `posts.md` / `published.md`. */
@@ -64,8 +62,8 @@ object PostRules {
     fun nextId(posts: List<Post>): Int = (posts.maxOfOrNull { it.id } ?: 0) + 1
 
     /**
-     * Default date for a new post: the latest date in the file (published posts included) plus
-     * seven days, but never before [today].
+     * Date for a new post: the latest date in [posts] (published posts included) plus seven days,
+     * but never before [today].
      */
     fun nextDate(posts: List<Post>, today: LocalDate): LocalDate {
         val latest = posts.mapNotNull { parseDate(it.date) }.maxOrNull() ?: return today
@@ -76,56 +74,60 @@ object PostRules {
     /** Mastodon counts characters as code points. */
     fun charCount(text: String): Int = text.codePointCount(0, text.length)
 
-    /** Problems with a post given the [others] in the file; empty when valid. */
-    fun problems(date: String, text: String, others: List<Post>, maxChars: Int): List<String> {
-        val out = mutableListOf<String>()
-        if (parseDate(date) == null) out += "Invalid date $date in posts.json."
-        if (others.any { it.date == date }) out += "Two posts would share the date $date."
-        if (text.isBlank()) out += "Post text is empty."
-        val count = charCount(text)
-        if (count > maxChars) out += "Post is $count characters; the limit is $maxChars."
-        return out
-    }
+    fun upcoming(posts: List<Post>): List<Post> =
+        posts.filter { !it.published }.sortedWith(compareBy({ it.date }, { it.id }))
+
+    /** The editor text: one upcoming post per line, next one first. */
+    fun queueText(posts: List<Post>): String =
+        upcoming(posts).joinToString("\n") { it.text.replace('\n', ' ') }
+
+    /** Non-blank, trimmed lines of the editor text; each is one post. */
+    fun parseLines(text: String): List<String> =
+        text.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
 
     /** Apply [edit] to [posts], returning the new list. Throws [EditException] if not allowed. */
     fun apply(posts: List<Post>, edit: Edit, maxChars: Int): List<Post> = when (edit) {
-        is Edit.Add -> add(posts, edit, maxChars)
-        is Edit.Update -> update(posts, edit, maxChars)
-        is Edit.Delete -> delete(posts, edit)
+        is Edit.ReplaceQueue -> replaceQueue(posts, edit, maxChars)
         is Edit.ImportLegacy -> LegacyImport.merge(posts, edit.queued, edit.published, edit.today)
     }
 
-    private fun add(posts: List<Post>, edit: Edit.Add, maxChars: Int): List<Post> {
-        val text = edit.text.trimEnd()
-        val date = nextDate(posts, edit.today).toString()
-        problems(date, text, posts, maxChars).firstOrNull()?.let { throw EditException(it) }
-        return posts + Post(id = nextId(posts), date = date, text = text)
-    }
-
-    private fun update(posts: List<Post>, edit: Edit.Update, maxChars: Int): List<Post> {
-        val text = edit.text.trimEnd()
-        val existing = posts.firstOrNull { it.id == edit.id }
-            ?: throw EditException("This post no longer exists on GitHub.")
-        if (existing.published) throw EditException("This post has already been published.")
-        val others = posts.filter { it.id != edit.id }
-        problems(existing.date, text, others, maxChars).firstOrNull()?.let { throw EditException(it) }
-        return posts.map { if (it.id == edit.id) it.copy(text = text) else it }
-    }
-
     /**
-     * Remove an upcoming post and close the gap: every later upcoming post moves up into its
-     * predecessor's slot (the first one takes the deleted post's date), so spacing is preserved.
+     * Rebuild the upcoming part of the file from the editor lines. Published posts are never
+     * touched.
+     * - Line i takes the i-th existing upcoming date, so removing a line moves later posts up
+     *   (no gap) and reordering lines reorders publishing.
+     * - Extra lines get the next weekly date (latest date + 7 days, never in the past).
+     * - A line whose text equals an existing upcoming post keeps that post's id; other lines get
+     *   new ids. Upcoming posts with no line left are removed, except ones added elsewhere since
+     *   the editor was loaded (not in baseIds), which are appended.
      */
-    private fun delete(posts: List<Post>, edit: Edit.Delete): List<Post> {
-        val existing = posts.firstOrNull { it.id == edit.id } ?: return posts
-        if (existing.published) throw EditException("This post has already been published.")
-        val later = posts
-            .filter { !it.published && it.date > existing.date }
-            .sortedBy { it.date }
-        val slots = listOf(existing.date) + later.map { it.date }
-        val newDate = later.mapIndexed { i, p -> p.id to slots[i] }.toMap()
-        return posts
-            .filter { it.id != edit.id }
-            .map { p -> newDate[p.id]?.let { p.copy(date = it) } ?: p }
+    private fun replaceQueue(posts: List<Post>, edit: Edit.ReplaceQueue, maxChars: Int): List<Post> {
+        val published = posts.filter { it.published }
+        val upcoming = upcoming(posts)
+
+        // Posts the workflow published since the editor was loaded: drop their line, don't re-queue.
+        val lines = edit.lines.toMutableList()
+        published.filter { it.id in edit.baseIds }.forEach { lines.remove(it.text) }
+        // Posts added elsewhere (another device) since the editor was loaded: keep them, at the end.
+        upcoming.filter { it.id !in edit.baseIds && it.text !in lines }.forEach { lines += it.text }
+
+        lines.forEachIndexed { i, line ->
+            val count = charCount(line)
+            if (count > maxChars) {
+                throw EditException("Line ${i + 1} has $count characters; the limit is $maxChars.")
+            }
+        }
+
+        val unmatched = upcoming.toMutableList()
+        var newId = nextId(posts)
+        val slots = upcoming.map { it.date }
+        val result = published.toMutableList()
+        lines.forEachIndexed { i, line ->
+            val id = unmatched.firstOrNull { it.text == line }?.also { unmatched.remove(it) }?.id
+                ?: newId++
+            val date = slots.getOrNull(i) ?: nextDate(result, edit.today).toString()
+            result += Post(id = id, date = date, text = line)
+        }
+        return result
     }
 }
